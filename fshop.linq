@@ -2,7 +2,7 @@
 
 type Price =  StandardPrice | DiscountedPrice
 type Address = { Street: string; City: string; Postcode: string; }
-type ShippingMethod = { Price: decimal; }
+type ShippingMethod = { Code: string; Price: decimal; }
 type PaymentMethod = Card | Cash | Cheque
 
 type StandardPrice = decimal
@@ -13,17 +13,14 @@ type Product = { SKU: string; Price: decimal; }
 type OrderLine = { Product: Product; Quantity: int; LineTotal: decimal; }
 type ShippingData = { ShippingAddress: Address; ShippingMethod: ShippingMethod; }
 
-type EmptyOrderData = { ShippingData: ShippingData option; BillingAddress: Address option; }
 type ActiveOrderData = { Lines: OrderLine list; Total: decimal; }
-type ShippableOrderData = { Lines: OrderLine list; ShippingData: ShippingData; Total: decimal; }
-type BillableOrderData = { Lines: OrderLine list; ShippingData: ShippingData; BillingAddress: Address; Total: decimal; }
+type ValidOrderData = { Lines: OrderLine list; ShippingData: ShippingData; BillingAddress: Address; Total: decimal; }
 type CompletedOrderData = { Lines: OrderLine list; ShippingData: ShippingData; BillingAddress: Address; Total: decimal; }
 
 type Order = 
-    | EmptyOrder of EmptyOrderData
+    | EmptyOrder
     | ActiveOrder of ActiveOrderData
-    | ShippableOrder of ShippableOrderData
-    | BillableOrder of BillableOrderData
+    | ValidOrder of ValidOrderData
     | CompletedOrder of CompletedOrderData
 
 let dmpOrderLine orderLine =
@@ -31,7 +28,7 @@ let dmpOrderLine orderLine =
 
 let dmpOrder order =
     match order with
-    | EmptyOrder o ->
+    | EmptyOrder ->
         printfn "Empty"
     | ActiveOrder o -> 
         printfn "%i Lines" (o.Lines.Count()) 
@@ -39,6 +36,15 @@ let dmpOrder order =
         o.Lines |> List.sortBy (fun l -> l.Product.SKU) |> List.iter dmpOrderLine
         printfn "------------------"
         printfn "Total %.2f" o.Total 
+    | ValidOrder o -> 
+        printfn "%i Lines" (o.Lines.Count()) 
+        printfn "------------------"
+        o.Lines |> List.sortBy (fun l -> l.Product.SKU) |> List.iter dmpOrderLine
+        printfn "------------------"
+        printfn "Total %.2f" o.Total 
+        printfn "------------------"
+        printfn "Ship To %s" o.ShippingData.ShippingAddress.Postcode 
+        printfn "Bill To %s" o.BillingAddress.Postcode 
     | _ -> failwith "Not Implemented"
     ""
    
@@ -67,39 +73,50 @@ let updateOrderLines line lines =
 let calculateTotal orderLines =
     orderLines |> List.sumBy (fun l -> l.LineTotal)
   
-let updateOrder qty product order = 
+let updateItems qty product order = 
     let line = { Product = product; Quantity = qty; LineTotal = product.Price * (decimal qty); }
     match order with
-    | EmptyOrder o ->
-        match o.ShippingData with
-        | None -> ActiveOrder { Lines = [line]; Total = line.LineTotal; }
-        | Some sd -> match o.BillingAddress with
-                     | None -> ShippableOrder { Lines = [line]; Total = line.LineTotal; ShippingData = sd; }
-                     | Some ba -> BillableOrder { Lines = [line]; Total = line.LineTotal; ShippingData = sd; BillingAddress = ba }
+    | EmptyOrder ->
+        ActiveOrder { Lines = [line]; Total = line.LineTotal; }
     | ActiveOrder o ->
         let updatedLines = o.Lines |> updateOrderLines line
-        if updatedLines.Length = 0 then EmptyOrder { ShippingData = None; BillingAddress = None; } else ActiveOrder { Lines = updatedLines; Total = updatedLines |> calculateTotal; }
-    | ShippableOrder o -> 
+        if updatedLines.Length = 0 then EmptyOrder else ActiveOrder { Lines = updatedLines; Total = updatedLines |> calculateTotal; }
+    | ValidOrder o -> 
         let updatedLines = o.Lines |> updateOrderLines line
-        if updatedLines.Length = 0 then EmptyOrder { ShippingData = Some(o.ShippingData); BillingAddress = None; } else ShippableOrder { o with Lines = updatedLines; Total = updatedLines |> calculateTotal; }
-    | BillableOrder o -> 
-        let updatedLines = o.Lines |> updateOrderLines line
-        if updatedLines.Length = 0 then EmptyOrder { ShippingData = Some(o.ShippingData); BillingAddress = Some(o.BillingAddress); } else BillableOrder { o with Lines = updatedLines; Total = updatedLines |> calculateTotal; }
+        if updatedLines.Length = 0 then EmptyOrder else ValidOrder { o with Lines = updatedLines; Total = updatedLines |> calculateTotal; }
     | CompletedOrder o -> 
         CompletedOrder o
+        
+let updateShippingDetails address shippingMethod order =
+    let shippingData = { ShippingAddress = address; ShippingMethod = shippingMethod; }
+    match order with
+    | EmptyOrder ->
+        order
+    | ActiveOrder o ->
+        ValidOrder { Lines = o.Lines; ShippingData = shippingData; BillingAddress = address; Total = o.Total; }
+    | ValidOrder o -> 
+        ValidOrder { o with ShippingData = shippingData; BillingAddress = address; }
+    | CompletedOrder o -> 
+        CompletedOrder o
+    
         
 let productA = { SKU = "A"; Price = 5.00M }
 let productB = { SKU = "B"; Price = 10.00M }
 let productC = { SKU = "C"; Price = 20.00M }
 
-let order = EmptyOrder { ShippingData = None; BillingAddress = None; }
+let address = { Street = "123 Some Street"; City = "Sometown"; Postcode = "SM1 100"; }
+let shippingMethod = { Code = "RM24"; Price = 2.50M; }
+
+let order = EmptyOrder
 
 order |> dmpr
-|> updateOrder 1 productA |> dmpr
-//|> updateOrder 1 productB |> dmpr
-|> updateOrder 1 productA |> dmpr
-//|> updateOrder 1 productC |> dmpr
-//|> updateOrder -1 productB |> dmpr 
-|> updateOrder -1 productA |> dmpr
+|> updateItems 1 productA |> dmpr
+//|> updateItems 1 productB |> dmpr
+|> updateItems 1 productA |> dmpr
+//|> updateItems 1 productC |> dmpr
+//|> updateItems -1 productB |> dmpr 
+|> updateItems -1 productA |> dmpr
+|> updateShippingDetails address shippingMethod |> dmpr
+|> updateItems -1 productA |> dmpr
 |> ignore
 
